@@ -1,45 +1,22 @@
+-- Roblox Exploit Analyzer Hub
+-- Mobile Optimized (Delta/Executor)
+-- Features:
+-- 1. Live Analysis: Scans game structure and hooks Remotes in real-time.
+-- 2. Interactive UI: On-screen console to view logs, search remotes, and copy data.
+-- 3. One-Click Copy: Buttons to copy the full report or specific remote names.
+-- 4. Auto-Generated Hooks: Creates a ready-to-use exploit framework string.
+
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = workspace
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
-local LOG_BUFFER = {}
-local MAX_LOG_ENTRIES = 200 -- Prevents memory leak if game is very verbose
 
--- 1. UTILITY: Log to buffer
-local function log(msg, level)
-    level = level or "INFO"
-    local timestamp = os.date("%H:%M:%S")
-    local entry = string.format("[%s] [%s] %s", timestamp, level, tostring(msg))
-    
-    -- Add to buffer
-    if #LOG_BUFFER < MAX_LOG_ENTRIES then
-        LOG_BUFFER[#LOG_BUFFER + 1] = entry
-    else
-        -- If buffer is full, replace the oldest entry (or just ignore new ones, but replacing keeps recent context)
-        table.remove(LOG_BUFFER, 1)
-        LOG_BUFFER[#LOG_BUFFER + 1] = entry
-    end
-    
-    -- Also print to console for immediate feedback
-    print(entry)
-end
-
--- 2. UTILITY: Safe GetChildren
-local function safeGetChildren(instance)
-    if not instance then return {} end
-    return instance:GetChildren()
-end
-
--- 3. UTILITY: Truncate Source Code
-local function getSnippet(source, length)
-    if not source then return "" end
-    return source:sub(1, length)
-end
-
--- 4. DATA STRUCTURES
+-- 1. DATA STRUCTURES
 local analysisData = {
     remotes = {},
     modules = {},
@@ -60,7 +37,40 @@ local analysisData = {
     }
 }
 
--- 5. CORE: TRAVERSE INSTANCE TREE
+local LOG_BUFFER = {}
+local MAX_LOG_ENTRIES = 500
+
+-- 2. UTILITY FUNCTIONS
+local function log(msg, level)
+    level = level or "INFO"
+    local timestamp = os.date("%H:%M:%S")
+    local entry = string.format("[%s] [%s] %s", timestamp, level, tostring(msg))
+    
+    if #LOG_BUFFER < MAX_LOG_ENTRIES then
+        LOG_BUFFER[#LOG_BUFFER + 1] = entry
+    else
+        table.remove(LOG_BUFFER, 1)
+        LOG_BUFFER[#LOG_BUFFER + 1] = entry
+    end
+    
+    print(entry)
+    -- Update UI if it exists
+    if _G._ExploitHubUI then
+        _G._ExploitHubUI:UpdateLog(entry)
+    end
+end
+
+local function safeGetChildren(instance)
+    if not instance then return {} end
+    return instance:GetChildren()
+end
+
+local function getSnippet(source, length)
+    if not source then return "" end
+    return source:sub(1, length)
+end
+
+-- 3. CORE: TRAVERSE INSTANCE TREE
 local function traverseInstance(instance, path, depth)
     if depth > 4 then return end
     
@@ -76,7 +86,6 @@ local function traverseInstance(instance, path, depth)
         analysisData.patterns.networking = analysisData.patterns.networking + 1
         log("Found " .. className .. ": " .. fullName, "REMOTE")
         
-        -- Hook for live monitoring
         if instance:IsA("RemoteEvent") then
             local originalFire = instance.FireServer
             instance.FireServer = function(...)
@@ -123,7 +132,7 @@ local function traverseInstance(instance, path, depth)
     end
 end
 
--- 6. ANALYSIS: PATTERN DETECTION
+-- 4. ANALYSIS: PATTERN DETECTION
 local function analyzePatterns()
     local keywords = {
         physics = {"BodyVelocity", "BodyGyro", "Motor6D", "AssemblyLinearVelocity"},
@@ -147,7 +156,7 @@ local function analyzePatterns()
     end
 end
 
--- 7. GENERATE: FINAL REPORT STRING
+-- 5. GENERATE: FINAL REPORT STRING
 local function generateReport()
     local report = {}
     local function addLine(line)
@@ -162,7 +171,6 @@ local function generateReport()
     addLine("Server ID: " .. game.Server)
     addLine("Timestamp: " .. os.date("!%Y-%m-%dT%H:%M:%SZ"))
     addLine("========================================")
-    
     addLine("")
     addLine("--- SUMMARY ---")
     addLine("Total Remotes: " .. #analysisData.remotes)
@@ -170,23 +178,20 @@ local function generateReport()
     addLine("Total LocalScripts: " .. #analysisData.localScripts)
     addLine("Total ScreenGuis: " .. #analysisData.uiFrameworks)
     addLine("")
-    
     addLine("--- PATTERNS ---")
     for k, v in pairs(analysisData.patterns) do
         addLine(string.format("%s: %d", k, v))
     end
     addLine("")
-    
     addLine("--- TOP MODULES (Largest) ---")
     table.sort(analysisData.modules, function(a, b) return a.length > b.length end)
     for i = 1, math.min(5, #analysisData.modules) do
         addLine(string.format("%d. %s (%s) - %d bytes", i, analysisData.modules[i].name, analysisData.modules[i].path, analysisData.modules[i].length))
     end
     addLine("")
-    
     addLine("--- REMOTES FOUND ---")
     for i, r in ipairs(analysisData.remotes) do
-        if i <= 50 then -- Limit output
+        if i <= 50 then
             addLine(string.format("%s: %s", r.type, r.path))
         else
             addLine("... and " .. (#analysisData.remotes - 50) .. " more")
@@ -194,11 +199,7 @@ local function generateReport()
         end
     end
     addLine("")
-    
-    addLine("--- LIVE NETWORK LOG ---")
-    addLine("Captured " .. #LOG_BUFFER .. " network events during analysis.")
-    addLine("Recent Events:")
-    -- Print last 20 entries from log buffer
+    addLine("--- LIVE NETWORK LOG (Last 20) ---")
     local startIdx = math.max(1, #LOG_BUFFER - 19)
     for i = startIdx, #LOG_BUFFER do
         addLine(LOG_BUFFER[i])
@@ -211,7 +212,142 @@ local function generateReport()
     return table.concat(report, "\n")
 end
 
--- 8. MAIN EXECUTION
+-- 6. UI CREATION
+local function createHubUI()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "ExploitAnalyzerHub"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = CoreGui
+    
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.fromScale(0.4, 0.7)
+    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
+    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = gui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = mainFrame
+    
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.fromScale(1, 0.08)
+    title.Position = UDim2.fromScale(0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🛡️ Roblox Exploit Analyzer Hub"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.Parent = mainFrame
+    
+    local logFrame = Instance.new("ScrollingFrame")
+    logFrame.Name = "LogFrame"
+    logFrame.Size = UDim2.fromScale(1, 0.6)
+    logFrame.Position = UDim2.fromScale(0, 0.1)
+    logFrame.BackgroundTransparency = 1
+    logFrame.BorderSizePixel = 0
+    logFrame.CanvasSize = UDim2.fromScale(0, 0)
+    logFrame.ScrollBarThickness = 8
+    logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    logFrame.Parent = mainFrame
+    
+    local logList = Instance.new("UIListLayout")
+    logList.SortOrder = Enum.SortOrder.LayoutOrder
+    logList.Padding = UDim.new(0, 5)
+    logList.Parent = logFrame
+    
+    local logEntry = Instance.new("TextButton")
+    logEntry.Name = "LogEntryTemplate"
+    logEntry.Size = UDim2.fromScale(1, 0)
+    logEntry.AutomaticSize = Enum.AutomaticSize.Y
+    logEntry.BackgroundTransparency = 1
+    logEntry.Text = ""
+    logEntry.TextColor3 = Color3.fromRGB(200, 200, 200)
+    logEntry.TextXAlignment = Enum.TextXAlignment.Left
+    logEntry.TextWrapped = true
+    logEntry.Font = Enum.Font.Code
+    logEntry.TextSize = 14
+    logEntry.Parent = logFrame
+    logEntry.Visible = false
+    
+    local btnFrame = Instance.new("Frame")
+    btnFrame.Name = "ButtonFrame"
+    btnFrame.Size = UDim2.fromScale(1, 0.15)
+    btnFrame.Position = UDim2.fromScale(0, 0.75)
+    btnFrame.BackgroundTransparency = 1
+    btnFrame.Parent = mainFrame
+    
+    local btnLayout = Instance.new("UIListLayout")
+    btnLayout.FillDirection = Enum.FillDirection.Horizontal
+    btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    btnLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+    btnLayout.Padding = UDim.new(0, 10)
+    btnLayout.Parent = btnFrame
+    
+    local function createButton(text, action)
+        local btn = Instance.new("TextButton")
+        btn.Name = "Btn_" .. text
+        btn.Size = UDim2.fromScale(0.3, 1)
+        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+        btn.Text = text
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextScaled = true
+        btn.Font = Enum.Font.GothamBold
+        btn.Parent = btnFrame
+        
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 8)
+        btnCorner.Parent = btn
+        
+        btn.MouseButton1Click:Connect(action)
+        return btn
+    end
+    
+    local btnCopyReport = createButton("Copy Report", function()
+        local report = generateReport()
+        setclipboard(report)
+        log("Report copied to clipboard!", "SUCCESS")
+    end)
+    
+    local btnCopyRemotes = createButton("Copy Remotes", function()
+        local remotes = {}
+        for _, r in ipairs(analysisData.remotes) do
+            remotes[#remotes + 1] = r.path
+        end
+        setclipboard(table.concat(remotes, "\n"))
+        log(#remotes .. " remotes copied to clipboard!", "SUCCESS")
+    end)
+    
+    local btnClose = createButton("Close", function()
+        gui:Destroy()
+        _G._ExploitHubUI = nil
+    end)
+    
+    -- UI Methods
+    local ui = {}
+    ui:UpdateLog = function(entry)
+        local newEntry = logEntry:Clone()
+        newEntry.Visible = true
+        newEntry.Text = entry
+        newEntry.LayoutOrder = #LOG_BUFFER
+        newEntry.Parent = logFrame
+        logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
+    end
+    
+    -- Load existing logs
+    for _, entry in ipairs(LOG_BUFFER) do
+        ui:UpdateLog(entry)
+    end
+    
+    _G._ExploitHubUI = ui
+    return gui
+end
+
+-- 7. MAIN EXECUTION
 local function main()
     log("Starting Mobile Exploit Analysis...", "MAIN")
     log("Place ID: " .. game.PlaceId .. " | Universe ID: " .. game.UniverseId, "META")
@@ -235,38 +371,15 @@ local function main()
     log("Analyzing Patterns...", "ANALYSIS")
     analyzePatterns()
     
-    -- 5. Wait for user interaction
-    log("Analysis complete. Interact with the game for 30-60 seconds to capture network traffic.", "INFO")
-    log("Press 'R' in your executor or wait 60 seconds to generate the final report.", "INFO")
+    -- 5. Create UI
+    local hub = createHubUI()
     
-    -- Wait for user to press 'R' or timeout after 60 seconds
-    local userInput = game:GetService("UserInputService")
-    local userRequestedReport = false
-    local startTime = tick()
+    log("Analysis complete. Interact with the game to capture network traffic.", "INFO")
+    log("Use the Hub UI to view logs and copy data.", "INFO")
     
-    -- Poll for user input
-    while not userRequestedReport and (tick() - startTime) < 60 do
-        if userInput:IsKeyDown(Enum.KeyCode.R) then
-            userRequestedReport = true
-        end
-        task.wait(0.1)
-    end
-    
-    if userRequestedReport then
-        log("User requested report generation.", "INFO")
-    else
-        log("Timeout reached. Generating report.", "INFO")
-    end
-    
-    -- 6. Generate and print final report
-    local report = generateReport()
-    log("Final Report Generated. Copy from below.", "DONE")
-    print(report)
-    
-    -- Return the report for easy copying
-    return report
+    return hub
 end
 
 -- Execute
-local report = main()
-return report
+local hub = main()
+return hub
