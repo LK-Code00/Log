@@ -1,7 +1,3 @@
--- Roblox Mobile Exploit Analyzer & Log Generator
--- Optimized for Delta/Executor on Mobile
--- Usage: Paste into executor and run. Interact with the game. All output is consolidated into a single string at the end for easy copying.
-
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -88,13 +84,6 @@ local function traverseInstance(instance, path, depth)
                 log("FIRE SERVER: " .. instance.Name .. " | Args: " .. args, "NET")
                 return originalFire(instance, ...)
             end
-            
-            -- Also hook OnClientEvent to see server->client communication
-            local originalConnect = instance.Connect
-            -- Note: RemoteEvent.OnClientEvent is a property, not a method we can easily monkey-patch directly without losing original listeners.
-            -- Instead, we'll wrap the event itself if possible, but simpler is to just log FireServer and rely on user interaction for OnClientEvent.
-            -- For a more robust hook, we'd need to re-create the event, which is complex. 
-            -- Let's stick to FireServer for now as it's the most common exploit vector (client->server).
         end
     end
     
